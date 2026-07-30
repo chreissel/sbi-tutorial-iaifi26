@@ -8,10 +8,10 @@ The tutorial is meant to accompany Prof. Christoph Weniger's lectures on the sam
 
 ## The notebooks
 
-The tutorial consists of one notebook each. You should work with the notebook labeled `student`, and check yourself against the solutions.
+The tutorial consists of one notebook each. You should work with the main notebook and check yourself against the matching `_solutions` version.
 
-1. **Simulation-based Inference from Scratch** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/01_sbi_foundations_student.ipynb)
-2. **Real-world example: Gravitational-wave chirp** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/02_gw_falcon_student.ipynb)
+1. **Simulation-based Inference from Scratch** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/01_sbi_foundations.ipynb)
+2. **Real-world example: Gravitational-wave chirp** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/02_gw_falcon.ipynb)
 
 ## Getting set up
 
