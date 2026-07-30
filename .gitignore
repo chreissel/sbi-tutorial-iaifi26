@@ -3,3 +3,6 @@ __pycache__/
 output/
 *.npy
 *.npz
+
+# Hackathon solutions — kept off the public remote so students don't see them.
+hackathon_solutions/

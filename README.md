@@ -12,6 +12,7 @@ The tutorial consists of one notebook each. You should work with the main notebo
 
 1. **Simulation-based Inference from Scratch** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/01_sbi_foundations.ipynb)
 2. **Real-world example: Gravitational-wave chirp** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/02_gw_falcon.ipynb)
+3. **Hackathon: Milky-Way stellar streams** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/03_hackathon_stellar_streams.ipynb)
 
 ## Getting set up
 
@@ -49,7 +50,16 @@ of the prose were taken from the following sources:
   (the ten-line flow-matching loss, data compression, and the sequential/dynamic
   SBI loop).
 - **`falcon`** — [`cweniger/falcon`](https://github.com/cweniger/falcon), the
-  CLI-driven SBI framework used in notebook 2.
+  CLI-driven SBI framework used in notebooks 2 and 3.
+- **stellar streams** — the notebook-3 simulator and binning are ported from
+  [`sstrax`](https://github.com/undark-lab/sstrax) and
+  [`albatross`](https://github.com/undark-lab/albatross) (Alvey, Gerdes &
+  Weniger, [arXiv:2304.02032](https://arxiv.org/abs/2304.02032)), a swyft/TMNRE
+  GD1-stream pipeline; here re-expressed as a `falcon` graph.
 
 The production-scale dynamic-SBI results referenced at the end of notebook 2 are
 from Alvey, Lyu, Weniger et al., [arXiv:2510.13997](https://arxiv.org/abs/2510.13997).
+
+## Hackathon prompt
+
+Use `falcon` to infer the parameters of the GD1 stellar stream from a binned image of its stars, scaling up the age–mass baseline that notebook 3 sets up. Grow the graph toward the progenitor's full six-dimensional phase space and compare posteriors honestly on **simulation budget** — which parameters does the stream actually constrain, and are the posteriors calibrated (run the notebook-1 coverage checks)? If you have time, push the eight uncertain tidal-stripping parameters into a nuisance node and marginalise them out, or add a sequential zoom. The simulator is [`sstrax`](https://github.com/undark-lab/sstrax), a `jax` model of GD1; a small 2-D CNN over the three (sky, proper-motion, distance–velocity) channels makes a good data embedding; and the production reference is [`albatross`](https://github.com/undark-lab/albatross) (Alvey, Gerdes & Weniger, [arXiv:2304.02032](https://arxiv.org/abs/2304.02032)), the swyft pipeline this problem is ported from.
