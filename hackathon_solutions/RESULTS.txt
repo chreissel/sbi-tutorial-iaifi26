@@ -1,0 +1,48 @@
+Measured results — build machine: Python 3.11.15, jax 0.10.2, torch 2.13 (CPU),
+falcon-sbi 0.5.1, 4 CPU cores, no GPU. (Absolute sim times are ~2x higher here
+than on the faster reference box in the task notes; the *ratios* are the point.)
+
+================================================================================
+PERFORMANCE FIX  (hackathon_solutions/timing_test.py)
+================================================================================
+simulate_stream shape: (362, 6)                      # (N_stars, 6), as albatross indexes it
+numpy stars_to_gd1 vs sstrax vmaps: max abs err 5.15e-05   # float32-level; numpy float64 is cleaner
+N_stars over an age sweep: 256 ... 1102              # N changes every call -> vmaps re-trace
+sstrax vmap conversion :  791.6 ms/sim               # pure re-compilation cost
+numpy  conversion      :    0.5 ms/sim
+speedup on conversion  :  1711x
+=> the numpy conversion turns a >3 s/sim chain back into a ~0.5 s/sim one.
+
+================================================================================
+BASELINE TASK  (hackathon_solutions/run_baseline.py, config_streams.yml)
+================================================================================
+infer (age, logmsat), 512 train + 96 val sims, 40 epochs, flow loss -0.24.
+runtime: 14m 11s on 4 CPU cores.
+posterior (800 samples):
+  age     : 2944.1 +/- 170.7    (truth 3000.0)
+  logmsat :    4.076 +/-  0.125 (truth 4.05)
+figure: hackathon_solutions/posterior_baseline.png  (truth sits inside the posterior;
+        visible age-mass degeneracy).
+
+================================================================================
+SCALE-UP TASK  (config_progenitor6d.yml)
+================================================================================
+infer the 6-D progenitor phase space (xc,yc,zc,vxc,vyc,vzc).
+short proof run (64 sims, 8 epochs): trained + sampled, posterior shape (100, 6). OK.
+the committed config uses 512-1024 sims / 60 epochs for a real posterior.
+
+================================================================================
+NUISANCE-MARGINALISATION TASK  (config_nuisance.yml)
+================================================================================
+infer (age, logmsat) with the 8 tidal-stripping parameters in a nuisance node
+(prior, no evidence). falcon graph shows z_nuis feeding x with no arrow back.
+short proof run (24 sims, 2 epochs): trained + marginalised + sampled, z: (20, 2). OK.
+
+================================================================================
+NOTEBOOK EXERCISES  (03_hackathon_stellar_streams_solutions.ipynb)
+================================================================================
+All code cells execute (verified headless, training cell excluded and proven via
+run_baseline.py):
+  EX1 (vary age): older stream is visibly longer in phi1.
+  EX2 (write config): priors age[500,5000], logmsat[3.0,4.5]; observed ./obs_stream.npy;
+                      `falcon graph` renders the 2-node model.

@@ -1,0 +1,60 @@
+# Scale-up solution: infer the progenitor's full present-day 6-D phase space
+# (position + velocity), everything else fixed at truth. Same graph, same CNN,
+# more parameters -> a 6-D flow. Proof that the "infer more parameters" task is
+# a change of config, not of code.
+#
+#   falcon launch -c hackathon_solutions/config_progenitor6d.yml -o hackathon_solutions/output/prog6d --no-interactive
+
+logging:
+  wandb: {enabled: false}
+  local: {enabled: true}
+
+paths:
+  imports: ["."]
+
+buffer:
+  min_samples: 512
+  max_samples: 1024
+  validation_samples: 128
+  simulate_count: 512
+  simulate_when_full: false
+
+graph:
+  z:
+    evidence: [x]
+    simulator:
+      _target_: falcon.priors.Product
+      priors:
+        - ['uniform', 10.0, 14.0]      # xc  [kpc]
+        - ['uniform', 0.1, 2.5]        # yc  [kpc]
+        - ['uniform', 6.0, 8.0]        # zc  [kpc]
+        - ['uniform', 90.0, 115.0]     # vxc [km/s]
+        - ['uniform', -280.0, -230.0]  # vyc [km/s]
+        - ['uniform', -120.0, -80.0]   # vzc [km/s]
+    estimator:
+      _target_: falcon.estimators.Flow
+      max_epochs: 60
+      net_type: nsf
+      lr: 0.003
+      gamma: 0.5
+      embedding:
+        _target_: streams_model.StreamCNN
+        out_features: 32
+        _input_: [x]
+      batch_size: 64
+      early_stop_patience: 25
+      theta_norm: true
+      use_best_models: true
+    ray:
+      num_gpus: 0
+
+  x:
+    parents: [z]
+    simulator:
+      _target_: streams_model.StreamImage
+      infer_params: [xc, yc, zc, vxc, vyc, vzc]   # <- the 6-D block this data node expects
+    observed: "./hackathon_solutions/obs_stream.npy"
+
+sample:
+  posterior:
+    n: 800

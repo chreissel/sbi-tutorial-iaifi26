@@ -1,0 +1,58 @@
+# Reference solution for the notebook-3 baseline: infer (age, logmsat) of the
+# GD1 progenitor from its binned stream image, everything else fixed at truth.
+# This is the fully-filled version of the config the student notebook leaves as
+# a TODO. Run from the repo root:
+#   python hackathon_solutions/make_observation.py
+#   falcon launch -c hackathon_solutions/config_streams.yml -o hackathon_solutions/output/baseline --no-interactive
+#   falcon sample posterior -c hackathon_solutions/config_streams.yml -o hackathon_solutions/output/baseline
+
+logging:
+  wandb: {enabled: false}
+  local: {enabled: true}
+
+paths:
+  imports: ["."]                    # streams_model.py lives at the repo root
+
+buffer:
+  min_samples: 256                  # sstrax is ~0.5-1 s/sim: keep the budget modest
+  max_samples: 512
+  validation_samples: 96
+  simulate_count: 256
+  simulate_when_full: false
+
+graph:
+  z:
+    evidence: [x]
+    simulator:
+      _target_: falcon.priors.Product
+      priors:
+        - ['uniform', 500.0, 5000.0]   # age      [Myr]
+        - ['uniform', 3.0, 4.5]        # logmsat  (msat = 10**logmsat, Msun)
+    estimator:
+      _target_: falcon.estimators.Flow
+      max_epochs: 40
+      net_type: nsf
+      lr: 0.003
+      gamma: 0.5
+      embedding:
+        _target_: streams_model.StreamCNN   # 2-D CNN over the (3, nbins, nbins) image
+        out_features: 16
+        _input_: [x]
+      batch_size: 64
+      early_stop_patience: 20
+      theta_norm: true
+      lr_decay_factor: 0.5
+      lr_patience: 8
+      use_best_models: true
+    ray:
+      num_gpus: 0
+
+  x:
+    parents: [z]
+    simulator:
+      _target_: streams_model.StreamImage    # infer_params defaults to [age, logmsat]
+    observed: "./hackathon_solutions/obs_stream.npy"
+
+sample:
+  posterior:
+    n: 800
