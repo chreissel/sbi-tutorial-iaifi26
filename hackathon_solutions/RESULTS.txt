@@ -39,10 +39,12 @@ infer (age, logmsat) with the 8 tidal-stripping parameters in a nuisance node
 short proof run (24 sims, 2 epochs): trained + marginalised + sampled, z: (20, 2). OK.
 
 ================================================================================
-NOTEBOOK EXERCISES  (03_hackathon_stellar_streams_solutions.ipynb)
+NOTEBOOK  (03_hackathon_stellar_streams_solutions.ipynb)
 ================================================================================
 All code cells execute (verified headless, training cell excluded and proven via
 run_baseline.py):
-  EX1 (vary age): older stream is visibly longer in phi1.
-  EX2 (write config): priors age[500,5000], logmsat[3.0,4.5]; observed ./obs_stream.npy;
-                      `falcon graph` renders the 2-node model.
+  Exercise 1 (vary age): older stream is visibly longer in phi1 (worked warm-up).
+  Open-ended baseline: priors age[500,5000], logmsat[3.0,4.5]; observed
+                       ./obs_stream.npy; `falcon graph` renders the 2-node model;
+                       trains to the posterior above. (The student notebook leaves
+                       this open; the solutions notebook works it through.)

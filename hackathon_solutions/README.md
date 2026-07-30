@@ -18,7 +18,7 @@ pip install "diffrax==0.6.1" "git+https://github.com/undark-lab/sstrax.git"
 
 | File | Proves |
 |------|--------|
-| `03_hackathon_stellar_streams_solutions.ipynb` | the student notebook with **both exercises and the config TODOs filled in** |
+| `03_hackathon_stellar_streams_solutions.ipynb` | the student notebook with **Exercise 1 filled in and the open-ended baseline worked all the way to a posterior** (config, training, plot) |
 | `timing_test.py` | the numpy GD1 conversion matches `sstrax` and kills the vmap re-tracing penalty (the performance fix) |
 | `make_observation.py` | writes `obs_stream.npy`, the fiducial observation every config points at |
 | `run_baseline.py` | end-to-end **baseline task**: make obs → `falcon` train → posterior figure |
@@ -43,11 +43,13 @@ falcon launch -c hackathon_solutions/config_nuisance.yml    -o hackathon_solutio
 
 ## Task → solution map
 
-- **Notebook EXERCISE 1** (parameters move the data): filled in the solutions
-  notebook — simulate at two ages, the older stream is visibly longer in `phi1`.
-- **Notebook EXERCISE 2** (write the falcon config): filled in the solutions
-  notebook and in `config_streams.yml` — the two `Product` priors are
-  `age ∈ [500, 5000]`, `logmsat ∈ [3.0, 4.5]`, and `observed: ./obs_stream.npy`.
+- **Notebook Exercise 1** (parameters move the data): the one worked warm-up in
+  the student notebook — simulate at two ages, the older stream is visibly
+  longer in `phi1`.
+- **The open-ended baseline** the student notebook poses ("Your hackathon"):
+  worked to a posterior in the solutions notebook and in `config_streams.yml` —
+  the two `Product` priors are `age ∈ [500, 5000]`, `logmsat ∈ [3.0, 4.5]`, and
+  `observed: ./obs_stream.npy`.
 - **Baseline inference**: `run_baseline.py` → a real 2-D posterior that pulls
   toward the truth and shows the age–mass degeneracy.
 - **Infer more parameters** (README prompt): `config_progenitor6d.yml`. Same
