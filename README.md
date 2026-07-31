@@ -12,6 +12,7 @@ The tutorial consists of one notebook each. You should work with the main notebo
 
 1. **Simulation-based Inference from Scratch** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/01_sbi_foundations.ipynb)
 2. **Real-world example: Gravitational-wave chirp** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/02_gw_falcon.ipynb)
+3. **Hackathon: Milky-Way stellar streams** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chreissel/sbi-tutorial-iaifi26/blob/main/03_hackathon_stellar_streams.ipynb)
 
 ## Getting set up
 
@@ -49,7 +50,16 @@ of the prose were taken from the following sources:
   (the ten-line flow-matching loss, data compression, and the sequential/dynamic
   SBI loop).
 - **`falcon`** — [`cweniger/falcon`](https://github.com/cweniger/falcon), the
-  CLI-driven SBI framework used in notebook 2.
+  CLI-driven SBI framework used in notebooks 2 and 3.
+- **stellar streams** — the notebook-3 simulator and binning are ported from
+  [`sstrax`](https://github.com/undark-lab/sstrax) and
+  [`albatross`](https://github.com/undark-lab/albatross) (Alvey, Gerdes &
+  Weniger, [arXiv:2304.02032](https://arxiv.org/abs/2304.02032)), a swyft/TMNRE
+  GD1-stream pipeline; here re-expressed as a `falcon` graph.
 
 The production-scale dynamic-SBI results referenced at the end of notebook 2 are
 from Alvey, Lyu, Weniger et al., [arXiv:2510.13997](https://arxiv.org/abs/2510.13997).
+
+## Hackathon prompt
+
+Stellar streams are among the best dynamical probes we have of the Milky Way's gravitational potential and its dark matter. A globular cluster or dwarf galaxy caught in the Galactic tide slowly unravels into a thin ribbon of stars strung along its orbit, and the ribbon's length, width, and kinematics encode both the progenitor that made it and the potential it fell through. The forward model is a stochastic, multi-Gyr disruption simulation with no tractable likelihood. Use simulation-based inference to estimate the GD1 progenitor's parameters from a binned image of its stream, marginalize the eight stripping nuisances, and checking whether the posteriors are actually calibrated. Compare everything honestly on simulation budget.
