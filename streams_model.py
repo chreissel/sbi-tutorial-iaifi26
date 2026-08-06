@@ -89,8 +89,8 @@ from sstrax.stream import init_stripping, sample_trace
 #
 # `age` is capped at 2000 Myr (albatross used 5000): a tighter age prior sheds
 # far fewer stars, which lets `N_MAX` — and hence the simulation cost — drop (see
-# the N_MAX note). The fiducial below is moved to match so the observation stays
-# inside the prior.
+# the N_MAX note). The fiducial below is moved to sit cleanly inside this prior so
+# the observation stays recoverable.
 PRIOR_RANGES = {
     "xc": (10.0, 14.0),
     "yc": (0.1, 2.5),
@@ -111,11 +111,13 @@ PRIOR_RANGES = {
 }
 
 # Fiducial ("true") parameters that define the observation and fill in whatever
-# is not being inferred. `age` sits at the (new) top of its prior.
+# is not being inferred. `age` sits cleanly inside its (500, 2000) prior so the
+# default (age, logmsat) posterior can peak on the truth rather than rail against
+# a boundary.
 TRUE_VALUES = {
     "xc": 11.8, "yc": 0.79, "zc": 6.4,
     "vxc": 109.5, "vyc": -254.5, "vzc": -90.3,
-    "age": 2000.0, "logmsat": 4.05,
+    "age": 1500.0, "logmsat": 4.05,
     "xi0": 0.001, "alpha": 20.9, "rh": 0.001, "mbar": 3.0,
     "sigv": 1.1, "lrelease": 1.405, "lmatch": 1.846, "stripnear": 0.5,
 }
