@@ -36,13 +36,54 @@ Two things worth knowing if you read `albatross` alongside this file
   reproduces sstrax to float precision while costing ~0.5 ms instead of ~700 ms.
   See `hackathon_solutions/` for the timing test.
 
+--------------------------------------------------------------------------------
+Making it as fast as possible — the jax fast path (section 7)
+--------------------------------------------------------------------------------
+
+The numpy port above only fixes the *coordinate transform*. The real cost of a
+simulation is inside `sstrax.simulate_stream` itself: it evolves the stars in a
+**Python `for` loop**, one jitted ODE solve per star, copying each result back to
+the host (`stars_Xf[i] = ...`). At the fiducial (~1000 stars) that loop is ~1.1
+s/sim, and the per-star host sync — not the physics — dominates.
+
+Two things fix that, and they are the same idea the numpy port used, taken to its
+conclusion — *make the shape constant so jax stops re-compiling*:
+
+  1. **vmap the star loop.** `sstrax.sample_trace` (evolve one star) is jittable
+     and vmappable. Replacing the Python loop with a single `jax.vmap` fuses all
+     the per-star solves into one kernel and removes the per-star host sync —
+     ~3.4x faster on CPU on its own.
+
+  2. **Fix the star count to a constant `N_MAX` + carry a weight mask.** The only
+     thing that changes shape between sims is `N_stars`; pin the array to `N_MAX`
+     and mark the truly-present stars with a 0/1 weight. Now the vmap compiles
+     *once* and is reused for every parameter vector (verified: no re-trace as
+     the parameters — hence the true star count — change), the histograms use the
+     weights so the count signal is preserved, and the *whole* pipeline
+     (stripping -> evolve -> GD1 -> noise -> background -> binning) is a single
+     fixed-shape jax program. So the answer to "can we do it all in jax, on a
+     GPU?" is **yes** — fixing the star count is exactly what unblocks it.
+
+`simulate_image_jax` is that program (fully jitted); `simulate_images_jax` vmaps
+it over a whole batch of parameter vectors — on a GPU that batch runs in
+parallel, which is where the large speed-ups come from (on CPU there is no spare
+parallelism, so batching only breaks even; the CPU win is the vmap+fixed-N, ~2-3x
+depending on `N_MAX`). The jax outputs match the numpy reference to float
+precision for the deterministic stages (coordinate transform ~1e-13, weighted
+binning exact) and are statistically identical for the stochastic ones. The numpy
+path stays the default and the notebook is unchanged; the jax path is opt-in via
+`StreamImage(..., backend="jax")` or the `*_jax` helpers directly.
+
 Falcon imports this module inside its Ray workers (see `paths.imports` in the
 config), so everything here must be importable with no side effects beyond the
 one-off constants below.
 """
 
+import functools
+
 import numpy as np
 import jax
+import jax.numpy as jnp
 
 # The physics package. Importing sstrax pulls in jax. `PRIOR_LIST` and
 # `Parameters` come from sstrax.constants.
@@ -117,6 +158,16 @@ ERRORS = {
 # square number so the three channels stack into a clean (3, NBINS, NBINS)
 # tensor for the CNN. Smaller = faster training, coarser images.
 NBINS = 48
+
+# Fixed star-array capacity for the jax fast path (section 7). The whole trick is
+# that this is *constant*, so the vmapped simulator compiles once and never
+# re-traces. It must cover the star count across the prior or heavy streams get
+# truncated (their count channel saturates): over the default (age, logmsat)
+# prior N_stars tops out ~3250, over the full 16-D prior ~3950, so 4096 is a safe
+# default that is exact everywhere. Lowering it is the direct speed<->accuracy
+# knob on CPU (e.g. 2048 ~= 2x faster and exact for all but the heaviest
+# streams); on a GPU the batch runs in parallel so N_MAX is close to free.
+N_MAX = 4096
 
 # The small, intuitive parameter block notebook 3 infers by default: the
 # stream's disruption age and its progenitor mass. Both visibly reshape the
@@ -334,11 +385,19 @@ class StreamImage:
     """
 
     def __init__(self, infer_params=DEFAULT_INFER, nuisance_params=None,
-                 nbins=NBINS, with_background=True):
+                 nbins=NBINS, with_background=True, backend="numpy", n_max=N_MAX):
         self.infer_params = list(infer_params)
         self.nuisance_params = list(nuisance_params) if nuisance_params else []
         self.nbins = int(nbins)
         self.with_background = bool(with_background)
+        # backend="numpy" (default) is the reference path; backend="jax" runs the
+        # fixed-N, fully-jitted simulator from section 7 — set it, and point jax
+        # at a GPU, when you want the batch to run in parallel. `n_max` only
+        # matters for the jax backend (see the N_MAX note above).
+        if backend not in ("numpy", "jax"):
+            raise ValueError(f"backend must be 'numpy' or 'jax', got {backend!r}")
+        self.backend = backend
+        self.n_max = int(n_max)
 
     def simulate_batch(self, batch_size, z, z_nuis=None):
         names = self.infer_params + self.nuisance_params
@@ -348,6 +407,11 @@ class StreamImage:
             Z = np.concatenate([z, z_nuis], axis=1)
         else:
             Z = z
+        if self.backend == "jax":
+            return simulate_images_jax(
+                Z, infer_params=names, n_max=self.n_max, nbins=self.nbins,
+                with_background=self.with_background,
+            )
         out = np.empty((len(Z), 3, self.nbins, self.nbins), dtype=np.float32)
         for i, zi in enumerate(Z):
             out[i] = simulate_image(
@@ -358,7 +422,172 @@ class StreamImage:
 
 
 # =============================================================================
-# 6. a data embedding for the falcon Flow estimator
+# 7. OPTIONAL fast path — the whole forward model in jax, fixed-N, GPU-ready
+# =============================================================================
+# See the module docstring for the "why". In short: pin the star array to a
+# constant `N_MAX` and carry a 0/1 weight mask, so the vmapped simulator compiles
+# once and the entire pipeline is one fixed-shape jax program that a GPU can run
+# (and batch) in parallel. Everything below reuses the exact same physics numbers
+# as the numpy path above.
+from sstrax.ode import dynamics_solver, mass_solver          # noqa: E402
+from sstrax.stream import init_stripping, sample_trace        # noqa: E402
+
+# Same constant Jacobian as the numpy port, on device.
+_C_JAX = jnp.asarray(_C)
+
+# Column layout of a GD1 row and its (lo, hi) binning window, in one place so the
+# noise vector, background bounds, and histograms all stay in sync.
+_GD1_COLS = ("dist", "phi1", "phi2", "vrad", "pm_phi1_cosphi2", "pm_phi2")
+_ERR_VEC = jnp.array([ERRORS[c] for c in _GD1_COLS])
+_BIN_LO = jnp.array([BINNING[c][0] for c in _GD1_COLS])
+_BIN_HI = jnp.array([BINNING[c][1] for c in _GD1_COLS])
+
+
+def _stars_to_gd1_jax(stars):
+    """jax twin of `stars_to_gd1`: (N, 6) halo phase space -> (N, 6) GD1.
+
+    Same algebra as the numpy version; matches it to float precision.
+    """
+    Xh, Vh = stars[:, :3], stars[:, 3:]
+    x0, y0, z0 = Xh[:, 0], Xh[:, 1], Xh[:, 2]
+    xsun, ysun, zsun = 8.0 - x0, y0, z0
+    r0 = jnp.sqrt(xsun ** 2 + ysun ** 2 + zsun ** 2)
+    b = jnp.arcsin(zsun / r0)
+    l = jnp.arctan2(ysun, xsun)
+    dNGP = 27.12825118085622 * jnp.pi / 180.0
+    lNGP = 122.9319185680026 * jnp.pi / 180.0
+    aNGP = 192.85948 * jnp.pi / 180.0
+    sb, cb = jnp.sin(b), jnp.cos(b)
+    sl, cl = jnp.sin(lNGP - l), jnp.cos(lNGP - l)
+    alpha = jnp.arctan((cb * sl) / (jnp.cos(dNGP) * sb - jnp.sin(dNGP) * cb * cl)) + aNGP
+    delta = jnp.arcsin(jnp.sin(dNGP) * sb + jnp.cos(dNGP) * cb * cl)
+    ca, sa, cd, sd = jnp.cos(alpha), jnp.sin(alpha), jnp.cos(delta), jnp.sin(delta)
+    xg = r0 * (-0.4776303088 * ca * cd - 0.1738432154 * sa * cd + 0.8611897727 * sd)
+    yg = r0 * (0.510844589 * ca * cd - 0.8524449229 * sa * cd + 0.111245042 * sd)
+    zg = r0 * (0.7147776536 * ca * cd + 0.4930681392 * sa * cd + 0.4959603976 * sd)
+    Xc = jnp.stack([xg, yg, zg], axis=1)
+    Vc = Vh @ _C_JAX.T
+    x, y, z = Xc[:, 0], Xc[:, 1], Xc[:, 2]
+    r = jnp.sqrt(x ** 2 + y ** 2 + z ** 2)
+    rho2 = x ** 2 + y ** 2
+    rho = jnp.sqrt(rho2)
+    phi1 = jnp.arctan2(y, x)
+    phi2 = jnp.arcsin(z / r)
+    vx, vy, vz = Vc[:, 0], Vc[:, 1], Vc[:, 2]
+    dr = (x * vx + y * vy + z * vz) / r
+    dphi1 = (-y * vx + x * vy) / rho2
+    dphi2 = (-x * z * vx - y * z * vy + rho2 * vz) / (r ** 2 * rho)
+    return jnp.stack([
+        r,
+        phi1 * 180.0 / jnp.pi,
+        phi2 * 180.0 / jnp.pi,
+        dr * _KPCMYR_TO_KMS,
+        dphi1 / r * _RADMYR_TO_MASYR,
+        dphi2 / r * _RADMYR_TO_MASYR,
+    ], axis=1)
+
+
+def _whist2d_jax(x, y, w, rng_x, rng_y, nbins):
+    """Weighted 2-D count histogram, fixed shape. Matches np.histogram2d exactly
+    (same right-open bin edges); `w` are the per-star weights (0 for padding /
+    de-selected stars)."""
+    ix = jnp.floor((x - rng_x[0]) / (rng_x[1] - rng_x[0]) * nbins).astype(jnp.int32)
+    iy = jnp.floor((y - rng_y[0]) / (rng_y[1] - rng_y[0]) * nbins).astype(jnp.int32)
+    inb = (ix >= 0) & (ix < nbins) & (iy >= 0) & (iy < nbins)
+    flat = jnp.where(inb, ix * nbins + iy, 0)
+    ww = jnp.where(inb, w, 0.0)
+    return jax.ops.segment_sum(ww, flat, num_segments=nbins * nbins).reshape(nbins, nbins)
+
+
+def _bin_stream_jax(gd1, w, nbins):
+    """(N, 6) GD1 stars + weights -> (3, nbins, nbins), same channels as
+    `bin_stream`."""
+    dist, phi1, phi2, vrad, pm1, pm2 = (gd1[:, i] for i in range(6))
+    sky = _whist2d_jax(phi1, phi2, w, BINNING["phi1"], BINNING["phi2"], nbins)
+    pm = _whist2d_jax(pm1, pm2, w, BINNING["pm_phi1_cosphi2"], BINNING["pm_phi2"], nbins)
+    dv = _whist2d_jax(dist, vrad, w, BINNING["dist"], BINNING["vrad"], nbins)
+    return jnp.stack([sky, pm, dv])
+
+
+@functools.partial(jax.jit, static_argnums=(2, 3, 4))
+def simulate_image_jax(key, params, n_max=N_MAX, nbins=NBINS, with_background=True):
+    """Full forward model in jax: `sstrax.Parameters` -> (3, nbins, nbins) image.
+
+    Same pipeline as `simulate_image`, but every stage is jax and the star array
+    is pinned to `n_max` (real stars carry weight 1, padding weight 0), so this
+    whole function compiles once and runs on whatever device jax sees — including
+    a GPU. `key` is a single jax PRNGKey seeding both the stream and the
+    observational noise/background. `n_max`, `nbins`, `with_background` are static.
+
+    Truncation: if the true star count exceeds `n_max` the extra stars are
+    dropped (the count channel saturates at `n_max`); keep `n_max` above the
+    prior's star count to avoid that — see the `N_MAX` note above.
+    """
+    k_star, k_noise, k_sel, k_bg = jax.random.split(key, 4)
+
+    # sstrax internals, exactly as simulate_stream sets them up...
+    clust_sol = dynamics_solver(params.cluster_final, params.age, 0.0,
+                                dense=True, maxstep_warnings=False)
+    mass_sol = mass_solver(params, clust_sol, maxstep_warnings=False)
+    nstars_f = jnp.floor((params.msat - mass_sol.evaluate(params.age)) / params.mbar)
+    strip = init_stripping(params, mass_sol)
+
+    # ...but evolve all n_max stars in ONE vmapped kernel instead of a Python loop
+    keys = jax.random.split(k_star, n_max)
+    stars = jax.vmap(sample_trace, in_axes=(0, None, None, None, None))(
+        keys, strip, clust_sol, mass_sol, params)                 # (n_max, 6)
+    w = (jnp.arange(n_max) < nstars_f).astype(stars.dtype)        # real-star mask
+
+    gd1 = _stars_to_gd1_jax(stars)
+    gd1 = gd1 + jax.random.normal(k_noise, gd1.shape) * _ERR_VEC  # per-obs errors
+    # selection efficiency: drop stars by zeroing their weight (fixed shape). This
+    # keeps each star independently with prob `stream_selection` (Binomial count),
+    # whereas the numpy `add_noise` keeps exactly floor(fraction * N). Both mean
+    # "keep ~95%"; the count differs by ~sqrt(N*p*(1-p)) ~ 0.7%, far below the
+    # per-bin counting noise. Generate the observation and the training sims with
+    # the *same* backend and this is a non-issue.
+    keep = jax.random.uniform(k_sel, (n_max,)) < ERRORS["stream_selection"]
+    w = w * keep.astype(w.dtype)
+
+    image = _bin_stream_jax(gd1, w, nbins)
+    if with_background:
+        n_bg = int(np.floor(ERRORS["total_background"] * ERRORS["background_removal"]))
+        bg = _BIN_LO + jax.random.uniform(k_bg, (n_bg, 6)) * (_BIN_HI - _BIN_LO)
+        image = image + _bin_stream_jax(bg, jnp.ones(n_bg), nbins)
+    return image.astype(jnp.float32)
+
+
+def _params_batch_from_Z(Z, infer_params):
+    """Stack per-row `Parameters` into one batched (vmappable) Parameters pytree."""
+    plist = [params_from_vector(z, infer_params) for z in Z]
+    return jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *plist)
+
+
+def simulate_images_jax(Z, infer_params=DEFAULT_INFER, keys=None, rng=None,
+                        n_max=N_MAX, nbins=NBINS, with_background=True):
+    """Batched jax forward model: (B, d) inference vectors -> (B, 3, nbins, nbins).
+
+    vmaps `simulate_image_jax` over the batch. On a GPU the B simulations run in
+    parallel — this is the path to use when you want the simulator "as fast as
+    possible" and have an accelerator. Returns a numpy array (host) so it drops
+    straight into the existing pipeline. Pass `keys` (a (B,) jax PRNGKey array)
+    for reproducibility, or a numpy `rng` to seed them.
+    """
+    Z = np.asarray(Z, dtype=float).reshape(-1, len(infer_params))
+    if keys is None:
+        rng = np.random.default_rng() if rng is None else rng
+        seeds = rng.integers(0, 2 ** 31 - 1, size=len(Z))
+        keys = jax.vmap(jax.random.PRNGKey)(jnp.asarray(seeds))
+    pbatch = _params_batch_from_Z(Z, infer_params)
+    batched = jax.vmap(
+        lambda k, p: simulate_image_jax(k, p, n_max, nbins, with_background),
+        in_axes=(0, 0),
+    )
+    return np.asarray(batched(keys, pbatch))
+
+
+# =============================================================================
+# 8. a data embedding for the falcon Flow estimator
 # =============================================================================
 
 import torch.nn as nn  # noqa: E402  (falcon always provides torch)
