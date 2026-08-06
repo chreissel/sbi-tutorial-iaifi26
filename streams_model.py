@@ -167,6 +167,15 @@ NBINS = 48
 # default that is exact everywhere. Lowering it is the direct speed<->accuracy
 # knob on CPU (e.g. 2048 ~= 2x faster and exact for all but the heaviest
 # streams); on a GPU the batch runs in parallel so N_MAX is close to free.
+#
+# N_stars is dominated by disruption age and progenitor mass, so tighten N_MAX to
+# whatever your prior actually spans — cost on CPU scales ~linearly with it. For
+# the default (age, logmsat<=4.5, mbar=3) task the worst-corner star count is:
+#     age<=5000 -> ~3250   (N_MAX=4096)
+#     age<=3000 -> ~2050   (N_MAX=2048)
+#     age<=2000 -> ~1390   (N_MAX=1536, ~2.7x vs numpy on CPU, still exact)
+# (Halving mbar's lower bound roughly triples these; measure your own corner with
+# the nstars snippet if you widen the prior.)
 N_MAX = 4096
 
 # The small, intuitive parameter block notebook 3 infers by default: the
